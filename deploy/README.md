@@ -6,7 +6,7 @@ This repo now contains a minimal real SIP edge path:
 - ARI worker creates an `externalMedia` channel per call
 - Python app receives RTP PCMU via local UDP and feeds existing orchestrator/STT/turn logic
 
-## 1) Install runtime on VM (Ubuntu 22.04)
+## 1) Install runtime on VM (Ubuntu 22.04/24.04)
 
 ```bash
 sudo apt update
@@ -38,6 +38,8 @@ sudo cp deploy/asterisk/rtp.conf /etc/asterisk/rtp.conf
 ```
 
 Important:
+- In `pjsip.conf`, set `external_signaling_address` and `external_media_address`
+  to your VM public IP/FQDN.
 - Update Twilio IP matches in `pjsip.conf` for your region.
 - For production, switch to TLS/SRTP and tighten access controls.
 
@@ -71,7 +73,12 @@ If your VM username/path differs from `azureuser`, update both service files fir
 - `10000-20000/udp` RTP media
 - `22/tcp` SSH restricted to your source IP
 
-## 6) Twilio trunk (inbound first)
+## 6) Dialplan matching for Twilio DID format
+
+Twilio commonly sends destination numbers in E.164 format (`+123...`).
+`deploy/asterisk/extensions.conf` includes both `_+X!` and `_X!` patterns.
+
+## 7) Twilio trunk (inbound first)
 
 - Configure Twilio Elastic SIP trunk Origination URI to your VM public SIP address.
 - Ensure number is attached to the trunk.
@@ -82,6 +89,17 @@ sudo asterisk -rvvv
 journalctl -u agentic-app -f
 journalctl -u agentic-ari-bridge -f
 ```
+
+## Production baseline practices
+
+- Keep Asterisk and Python app as separate `systemd` services on the same VM.
+- Pin and deploy from tagged releases (`vX.Y.Z`), not ad-hoc local copies.
+- Store secrets in a managed secret store (Azure Key Vault) and inject at deploy.
+- Restrict NSG source ranges from `Any` to Twilio SIP/media ranges and trusted admin IPs.
+- Add health checks and alerting:
+  - `systemctl is-active asterisk agentic-app agentic-ari-bridge`
+  - log shipping from `journalctl` and `/var/log/asterisk`.
+- Use a second VM for blue/green updates before production cutover.
 
 ## Notes on current scope
 
