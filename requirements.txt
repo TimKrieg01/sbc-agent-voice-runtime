@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+websockets
+azure-cognitiveservices-speech
+python-dotenv
+pydantic-settings
+python-multipart
+audioop-lts; python_version >= '3.13'
+torch
+transformers
+numpy
+librosa
+webrtcvad-wheels
