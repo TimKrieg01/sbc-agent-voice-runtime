@@ -221,6 +221,54 @@ class AriBridgeWorker:
 
         self._stop_media_session(call["session_id"])
 
+    def _log_hangup_event(self, event: dict) -> None:
+        channel = event.get("channel", {}) or {}
+        channel_id = channel.get("id")
+        if not channel_id:
+            return
+
+        # Try to correlate either by inbound channel id or by known externalMedia id.
+        related = None
+        if channel_id in self.calls:
+            related = self.calls[channel_id]
+        else:
+            for call in self.calls.values():
+                if call.get("external_id") == channel_id:
+                    related = call
+                    break
+
+        cause = event.get("cause") or channel.get("cause")
+        cause_txt = event.get("cause_txt") or channel.get("cause_txt")
+        state = channel.get("state")
+        name = channel.get("name")
+        dialplan = channel.get("dialplan", {}) or {}
+        exten = dialplan.get("exten")
+
+        if related:
+            logger.warning(
+                "Hangup signal: channel=%s name=%s state=%s cause=%s cause_txt=%s "
+                "linked_session=%s linked_tenant=%s linked_bridge=%s exten=%s",
+                channel_id,
+                name,
+                state,
+                cause,
+                cause_txt,
+                related.get("session_id"),
+                related.get("tenant_id"),
+                related.get("bridge_id"),
+                exten,
+            )
+        else:
+            logger.warning(
+                "Hangup signal: channel=%s name=%s state=%s cause=%s cause_txt=%s exten=%s",
+                channel_id,
+                name,
+                state,
+                cause,
+                cause_txt,
+                exten,
+            )
+
     async def run(self):
         ws_query = parse.urlencode(
             {
@@ -244,6 +292,8 @@ class AriBridgeWorker:
                     await self.handle_stasis_start(event)
                 elif event_type == "StasisEnd":
                     await self.handle_stasis_end(event.get("channel", {}))
+                elif event_type in {"ChannelHangupRequest", "ChannelDestroyed"}:
+                    self._log_hangup_event(event)
 
 
 async def _main():
