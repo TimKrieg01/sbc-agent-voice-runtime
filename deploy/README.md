@@ -130,19 +130,29 @@ pjsip set logger on
 
 You should see inbound INVITEs on `TCP/TLS` to port `5061`.
 
-## 7.2) Enable Secure RTP (optional hardening)
+## 7.2) Secure RTP (SRTP) for media encryption
 
-When Twilio Secure Trunking SRTP is enabled, update endpoint media encryption:
+`deploy/asterisk/pjsip.conf` now enables SRTP (SDES) by default for `twilio-inbound`:
 
 ```ini
-; /etc/asterisk/pjsip.conf
 [twilio-inbound]
 media_encryption=sdes
 media_use_received_transport=yes
 ```
 
-Then reload and test. If calls fail after enabling SRTP, revert these two lines and confirm
-Twilio trunk SRTP settings are aligned first.
+You must also enable Twilio Secure Trunking media encryption on the trunk side.
+
+After applying config:
+
+```bash
+sudo systemctl restart asterisk
+sudo asterisk -rvvv
+pjsip set logger on
+```
+
+Verification target in SDP:
+- secure media should show `RTP/SAVP` (or `RTP/SAVPF`)
+- if you still see `RTP/AVP`, media is still plaintext RTP.
 
 ## 8) Multi-tenant SIP routing (shared infra)
 
