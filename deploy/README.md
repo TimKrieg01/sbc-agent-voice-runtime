@@ -69,7 +69,8 @@ If your VM username/path differs from `azureuser`, update both service files fir
 
 ## 5) Azure NSG/firewall ports
 
-- `5060/udp` SIP signaling (or `5061/tcp` for TLS)
+- `5060/udp` SIP signaling (legacy/transition)
+- `5061/tcp` SIP over TLS (recommended)
 - `10000-20000/udp` RTP media
 - `22/tcp` SSH restricted to your source IP
 
@@ -89,6 +90,59 @@ sudo asterisk -rvvv
 journalctl -u agentic-app -f
 journalctl -u agentic-ari-bridge -f
 ```
+
+## 7.1) Enable TLS Secure SIP
+
+1. Place your TLS cert and key on the VM:
+
+```bash
+sudo mkdir -p /etc/asterisk/keys
+sudo cp /path/to/fullchain.pem /etc/asterisk/keys/fullchain.pem
+sudo cp /path/to/privkey.pem /etc/asterisk/keys/privkey.pem
+sudo chown asterisk:asterisk /etc/asterisk/keys/fullchain.pem /etc/asterisk/keys/privkey.pem
+sudo chmod 640 /etc/asterisk/keys/fullchain.pem /etc/asterisk/keys/privkey.pem
+```
+
+2. In `deploy/asterisk/pjsip.conf`, set:
+- `external_signaling_address=<PUBLIC_FQDN>`
+- `external_media_address=<PUBLIC_FQDN>`
+- `transport-tls` cert paths if different from defaults
+
+3. Ensure Azure NSG allows `5061/tcp` from Twilio SIP signaling ranges.
+
+4. Reload/restart Asterisk:
+
+```bash
+sudo asterisk -rx "pjsip reload"
+sudo systemctl restart asterisk
+```
+
+5. In Twilio Elastic SIP Trunk, set Origination URI to:
+- `sip:<number>@<tenant>.sip.agentvoiceruntime.com:5061;transport=tls`
+
+6. Verify in Asterisk CLI:
+
+```bash
+sudo asterisk -rvvv
+pjsip show transports
+pjsip set logger on
+```
+
+You should see inbound INVITEs on `TCP/TLS` to port `5061`.
+
+## 7.2) Enable Secure RTP (optional hardening)
+
+When Twilio Secure Trunking SRTP is enabled, update endpoint media encryption:
+
+```ini
+; /etc/asterisk/pjsip.conf
+[twilio-inbound]
+media_encryption=sdes
+media_use_received_transport=yes
+```
+
+Then reload and test. If calls fail after enabling SRTP, revert these two lines and confirm
+Twilio trunk SRTP settings are aligned first.
 
 ## 8) Multi-tenant SIP routing (shared infra)
 
