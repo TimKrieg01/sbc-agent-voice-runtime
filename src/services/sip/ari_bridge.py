@@ -4,9 +4,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 from urllib import error, parse, request
 
 import websockets
+from src.core.tenant import TenantResolutionError, resolve_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +19,6 @@ ASTERISK_ARI_USER = os.getenv("ASTERISK_ARI_USER", "agentic")
 ASTERISK_ARI_PASS = os.getenv("ASTERISK_ARI_PASS", "agentic-secret")
 ASTERISK_ARI_APP = os.getenv("ASTERISK_ARI_APP", "agentic")
 PYTHON_APP_BASE = os.getenv("PYTHON_APP_BASE", "http://127.0.0.1:8000")
-SIP_TENANT_ID = os.getenv("SIP_TENANT_ID", "default")
-SIP_STT_ENGINE = os.getenv("SIP_STT_ENGINE", "azure")
-SIP_LANGUAGES = [x.strip() for x in os.getenv("SIP_LANGUAGES", "en-US").split(",") if x.strip()]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -48,19 +47,47 @@ def _ari_url(path: str, query: dict | None = None) -> str:
     return f"{ASTERISK_ARI_BASE}{path}?{parse.urlencode(params)}"
 
 
+def _extract_sip_host_from_to_header(to_header: str | None) -> str:
+    """
+    Parse host from SIP To header.
+    Example:
+    - "<sip:+123@customer1.sip.agentvoiceruntime.com>;tag=abc" -> "customer1.sip.agentvoiceruntime.com"
+    """
+    if not to_header:
+        return ""
+
+    compact = to_header.strip()
+    match = re.search(r"sips?:[^@]+@([^;>\s]+)", compact, re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(1).strip().lower()
+
+
+def _safe_arg(args: list[str], index: int) -> str:
+    if index >= len(args):
+        return ""
+    return (args[index] or "").strip()
+
+
 class AriBridgeWorker:
     def __init__(self):
         self.calls: dict[str, dict] = {}
 
-    def _start_media_session(self, session_id: str) -> dict:
+    def _start_media_session(
+        self,
+        session_id: str,
+        tenant_id: str,
+        stt_engine: str,
+        languages: list[str],
+    ) -> dict:
         return _json_http(
             "POST",
             f"{PYTHON_APP_BASE}/internal/sip/session/start",
             {
                 "session_id": session_id,
-                "tenant_id": SIP_TENANT_ID,
-                "stt_engine": SIP_STT_ENGINE,
-                "languages": SIP_LANGUAGES,
+                "tenant_id": tenant_id,
+                "stt_engine": stt_engine,
+                "languages": languages,
             },
         )
 
@@ -76,9 +103,11 @@ class AriBridgeWorker:
     def _ari_delete(self, path: str, query: dict | None = None) -> None:
         _json_http("DELETE", _ari_url(path, query))
 
-    async def handle_stasis_start(self, channel: dict) -> None:
+    async def handle_stasis_start(self, event: dict) -> None:
+        channel = event.get("channel", {})
         channel_id = channel.get("id")
         channel_name = channel.get("name", "")
+        args = [str(x) for x in (event.get("args") or [])]
 
         # externalMedia channels also emit StasisStart. Skip those.
         if channel_name.startswith("UnicastRTP/"):
@@ -91,7 +120,49 @@ class AriBridgeWorker:
         logger.info("Inbound SIP channel entered Stasis: id=%s name=%s", channel_id, channel_name)
 
         session_id = channel_id
-        media_session = self._start_media_session(session_id)
+        called_number = _safe_arg(args, 0) or channel.get("dialplan", {}).get("exten", "")
+        to_header = _safe_arg(args, 1)
+        auth_user = _safe_arg(args, 2)
+        ingress_host = _extract_sip_host_from_to_header(to_header)
+
+        try:
+            tenant_resolution = resolve_tenant(
+                ingress_host=ingress_host,
+                called_number=called_number,
+                auth_user=auth_user,
+            )
+        except TenantResolutionError as exc:
+            logger.error(
+                "Tenant resolution failed for channel=%s called_number='%s' ingress_host='%s' auth_user='%s': %s",
+                channel_id,
+                called_number,
+                ingress_host,
+                auth_user,
+                exc,
+            )
+            try:
+                self._ari_delete(f"/channels/{channel_id}")
+            except Exception as drop_exc:
+                logger.warning("Failed to hang up channel %s after resolution error: %s", channel_id, drop_exc)
+            return
+
+        tenant = tenant_resolution.tenant
+        logger.info(
+            "Resolved tenant for channel=%s tenant_id=%s match=%s host='%s' called='%s' auth_user='%s'",
+            channel_id,
+            tenant.tenant_id,
+            tenant_resolution.match_reason,
+            ingress_host,
+            called_number,
+            auth_user,
+        )
+
+        media_session = self._start_media_session(
+            session_id=session_id,
+            tenant_id=tenant.tenant_id,
+            stt_engine=tenant.stt_engine,
+            languages=tenant.languages,
+        )
         media_host = media_session.get("media_host", "127.0.0.1")
         media_port = media_session["media_port"]
 
@@ -114,10 +185,14 @@ class AriBridgeWorker:
             "session_id": session_id,
             "bridge_id": bridge_id,
             "external_id": external_id,
+            "tenant_id": tenant.tenant_id,
+            "ingress_host": ingress_host,
+            "called_number": called_number,
         }
         logger.info(
-            "Call bridged: channel=%s bridge=%s external=%s media=%s:%s",
+            "Call bridged: channel=%s tenant=%s bridge=%s external=%s media=%s:%s",
             channel_id,
+            tenant.tenant_id,
             bridge_id,
             external_id,
             media_host,
@@ -165,11 +240,10 @@ class AriBridgeWorker:
                     continue
 
                 event_type = event.get("type")
-                channel = event.get("channel", {})
                 if event_type == "StasisStart":
-                    await self.handle_stasis_start(channel)
+                    await self.handle_stasis_start(event)
                 elif event_type == "StasisEnd":
-                    await self.handle_stasis_end(channel)
+                    await self.handle_stasis_end(event.get("channel", {}))
 
 
 async def _main():

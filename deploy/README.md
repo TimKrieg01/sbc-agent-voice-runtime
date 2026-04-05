@@ -90,6 +90,33 @@ journalctl -u agentic-app -f
 journalctl -u agentic-ari-bridge -f
 ```
 
+## 8) Multi-tenant SIP routing (shared infra)
+
+The ARI bridge now resolves tenant per call by ingress host before media starts.
+
+1. Inbound dialplan passes these into `Stasis` args:
+- dialed number (`${EXTEN}`)
+- `To` header (`${PJSIP_HEADER(read,To)}`), used to parse ingress host
+- optional auth hint header
+
+2. Configure tenant rules in `.env`:
+
+```bash
+SIP_STRICT_TENANT_RESOLUTION=true
+SIP_TENANT_RULES_JSON=[{"tenant_id":"acme","trunk_id":"acme-main","ingress_hosts":["acme.sip.agentvoiceruntime.com"],"called_numbers":["+49123456789"],"auth_users":["acme-auth"],"stt_engine":"azure","languages":["en-US","de-DE"]}]
+```
+
+Notes:
+- `ingress_hosts` is required for tenant identity.
+- `auth_users` is optional and only used as extra validation for that matched host.
+- `called_numbers` is not used to identify tenant by itself.
+
+3. For each customer, onboard a unique host under your wildcard DNS:
+- `customer1.sip.agentvoiceruntime.com`
+- `customer2.sip.agentvoiceruntime.com`
+
+4. If a call is unknown or ambiguous and strict mode is enabled, the bridge rejects it.
+
 ## Production baseline practices
 
 - Keep Asterisk and Python app as separate `systemd` services on the same VM.
