@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from src.core.db import fetch_effective_source_cidrs_from_db, has_database_config
 from src.services.sip.session_manager import sip_session_manager
 
 router = APIRouter(prefix="/internal/sip", tags=["sip-internal"])
@@ -40,3 +41,13 @@ async def stop_sip_session(req: StopSipSessionRequest):
 @router.get("/session")
 async def list_sip_sessions():
     return {"sessions": await sip_session_manager.snapshot()}
+
+
+@router.get("/config/source-cidrs")
+async def get_effective_source_cidrs():
+    if not has_database_config():
+        return {"source": "none", "cidrs": []}
+    return {
+        "source": "db",
+        "cidrs": fetch_effective_source_cidrs_from_db(),
+    }

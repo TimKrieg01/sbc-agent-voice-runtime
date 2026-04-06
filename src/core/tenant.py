@@ -5,6 +5,13 @@ import logging
 import os
 from dataclasses import dataclass
 
+from src.core.config import settings
+from src.core.db import (
+    DbTenantRuleRow,
+    fetch_active_tenant_rules_from_db,
+    has_database_config,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -139,6 +146,81 @@ def _parse_rules_from_env() -> list[TenantRule]:
     return rules
 
 
+def _parse_rules_from_db() -> list[TenantRule]:
+    rows: list[DbTenantRuleRow] = fetch_active_tenant_rules_from_db()
+    rules: list[TenantRule] = []
+
+    for row in rows:
+        if not row.tenant_id:
+            raise TenantResolutionError("DB row missing tenant_id (organizations.slug).")
+        if not row.ingress_hosts:
+            raise TenantResolutionError(
+                f"Trunk '{row.trunk_id}' for tenant '{row.tenant_id}' has no ingress host mapping."
+            )
+
+        tenant = TenantConfig(
+            tenant_id=row.tenant_id,
+            stt_engine=row.stt_engine,
+            languages=row.languages,
+            backend_url=row.backend_url,
+            trunk_id=row.trunk_id,
+        )
+        rules.append(
+            TenantRule(
+                tenant=tenant,
+                ingress_hosts=set(row.ingress_hosts),
+                called_numbers=set(),
+                auth_users=set(row.auth_users),
+            )
+        )
+
+    seen_hosts: set[str] = set()
+    seen_auth_users: set[str] = set()
+    for rule in rules:
+        overlap_hosts = rule.ingress_hosts.intersection(seen_hosts)
+        if overlap_hosts:
+            raise TenantResolutionError(
+                f"Duplicate ingress host keys found in DB: {sorted(overlap_hosts)}. "
+                "Hosts must be globally unique across tenants."
+            )
+        seen_hosts.update(rule.ingress_hosts)
+
+        overlap_auth_users = rule.auth_users.intersection(seen_auth_users)
+        if overlap_auth_users:
+            raise TenantResolutionError(
+                f"Duplicate auth_users keys found in DB: {sorted(overlap_auth_users)}. "
+                "Auth users must be globally unique across tenants."
+            )
+        seen_auth_users.update(rule.auth_users)
+
+    return rules
+
+
+def _load_tenant_rules() -> tuple[list[TenantRule], str]:
+    mode = (settings.SIP_TENANT_CONFIG_SOURCE or "auto").strip().lower()
+    if mode not in {"auto", "db", "env"}:
+        raise TenantResolutionError(
+            f"Invalid SIP_TENANT_CONFIG_SOURCE='{settings.SIP_TENANT_CONFIG_SOURCE}'. "
+            "Use one of: auto, db, env."
+        )
+
+    if mode == "env":
+        return _parse_rules_from_env(), "env"
+
+    if mode == "db":
+        return _parse_rules_from_db(), "db"
+
+    # auto mode
+    if has_database_config():
+        try:
+            rules = _parse_rules_from_db()
+            return rules, "db"
+        except Exception as exc:
+            logger.warning("DB tenant config load failed, falling back to env rules: %s", exc)
+
+    return _parse_rules_from_env(), "env"
+
+
 def resolve_tenant(
     ingress_host: str | None,
     called_number: str | None,
@@ -150,14 +232,14 @@ def resolve_tenant(
     default_tenant = _fallback_default_tenant()
 
     try:
-        rules = _parse_rules_from_env()
+        rules, rules_source = _load_tenant_rules()
     except TenantResolutionError:
         raise
     except Exception as exc:  # pragma: no cover - defensive fallback
-        raise TenantResolutionError("Failed to parse SIP tenant rules.") from exc
+        raise TenantResolutionError("Failed to parse SIP tenant rules from configured source.") from exc
 
     if not rules:
-        return TenantResolution(tenant=default_tenant, match_reason="default:no-rules")
+        return TenantResolution(tenant=default_tenant, match_reason=f"default:no-rules:{rules_source}")
 
     if not host:
         raise TenantResolutionError("Ingress host is missing. Host is required for tenant resolution.")
@@ -172,7 +254,7 @@ def resolve_tenant(
         if strict:
             raise TenantResolutionError(f"No tenant mapping found for ingress host '{host}'.")
         logger.warning("Tenant resolution fallback to default for unknown ingress host='%s'.", host)
-        return TenantResolution(tenant=default_tenant, match_reason="default:fallback-host")
+        return TenantResolution(tenant=default_tenant, match_reason=f"default:fallback-host:{rules_source}")
 
     matched_rule = host_matches[0]
 
@@ -187,9 +269,9 @@ def resolve_tenant(
             raise TenantResolutionError(
                 f"Invalid auth_user '{auth}' for host '{host}'."
             )
-        return TenantResolution(tenant=matched_rule.tenant, match_reason="ingress_host+auth_user")
+        return TenantResolution(tenant=matched_rule.tenant, match_reason=f"ingress_host+auth_user:{rules_source}")
 
-    return TenantResolution(tenant=matched_rule.tenant, match_reason="ingress_host")
+    return TenantResolution(tenant=matched_rule.tenant, match_reason=f"ingress_host:{rules_source}")
 
 
 def get_tenant_config(sip_domain_or_number: str) -> dict:

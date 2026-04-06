@@ -11,3 +11,5 @@ transformers
 numpy
 librosa
 webrtcvad-wheels
+sqlalchemy
+psycopg[binary]
