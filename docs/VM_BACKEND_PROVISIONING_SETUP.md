@@ -2,6 +2,12 @@
 
 This runbook converts the VM requirements into executable steps and defines the JSON contract used by the backend worker.
 
+## 0. Current behavior lock
+
+Provisioning is ingress-host based only.
+The worker must provide routing state keyed by trunk + ingress host.
+Do not rely on called-number matching in this phase.
+
 ## 1. Service account and directories
 
 Run on VM as root/admin:
@@ -104,6 +110,130 @@ agentvoice ALL=(root) NOPASSWD: /usr/sbin/asterisk -rx pjsip\ show\ endpoint\ *
 }
 ```
 
+### 6.1 State file specification (exact contract for worker team)
+
+Top-level object:
+- must be valid JSON object
+- UTF-8 text file
+- absolute path on VM (script rejects relative path)
+
+Required fields:
+1. `ingress_hosts`
+- type: `array[string]`
+- min items: `0` (recommended `>=1`)
+- example: `["org1.sip.voiceagentruntime.com"]`
+
+2. `auth_users`
+- type: `array[string]`
+- example: `["org1-auth"]`
+
+3. `routing_rules`
+- type: `array[object]`
+- each rule should include at least:
+  - `priority` (number)
+  - `backend_url` (string, https URL)
+
+4. `acl.signaling_cidrs`
+- type: `array[string]`
+- CIDR strings used for SIP signaling source matching
+
+5. `acl.media_cidrs`
+- type: `array[string]`
+- CIDR strings used for RTP media source policy
+
+6. `transport.allowed_transports`
+- type: `array[string]`
+- allowed values: `udp`, `tcp`, `tls`
+- min items: `1`
+
+7. `transport.signaling_ports`
+- type: `array[number]`
+- min items: `1`
+- typical values: `5060`, `5061`
+
+8. `transport.rtp.port_start`
+- type: `number`
+
+9. `transport.rtp.port_end`
+- type: `number`
+- must satisfy `port_start <= port_end`
+
+Optional fields:
+1. `trunk_id`
+- type: `string`
+- if present, must match `--trunk-id` arg
+
+2. `transport.tls_enabled`
+- type: `boolean`
+- default used by script: `false`
+
+3. `requires_disruptive_action`
+- type: `boolean`
+- if `true`, script checks active channels and may return `deferred_active_calls`
+
+### 6.2 Minimum valid payload (smallest accepted shape)
+
+```json
+{
+  "ingress_hosts": ["org1.sip.voiceagentruntime.com"],
+  "auth_users": [],
+  "routing_rules": [
+    { "priority": 100, "backend_url": "https://some.example.com" }
+  ],
+  "acl": {
+    "signaling_cidrs": ["54.172.60.0/23"],
+    "media_cidrs": ["54.172.60.0/23"]
+  },
+  "transport": {
+    "allowed_transports": ["tls"],
+    "signaling_ports": [5061],
+    "rtp": { "port_start": 10000, "port_end": 20000 }
+  }
+}
+```
+
+### 6.3 Recommended production payload
+
+```json
+{
+  "trunk_id": "org1-main",
+  "ingress_hosts": ["org1.sip.voiceagentruntime.com"],
+  "auth_users": ["org1-auth"],
+  "routing_rules": [
+    {
+      "priority": 100,
+      "backend_url": "https://some.example.com",
+      "path": "/sip-events",
+      "enabled": true
+    }
+  ],
+  "acl": {
+    "signaling_cidrs": ["54.172.60.0/23", "34.203.250.0/23"],
+    "media_cidrs": ["54.172.60.0/23", "34.203.250.0/23"]
+  },
+  "transport": {
+    "allowed_transports": ["tls", "udp"],
+    "signaling_ports": [5061, 5060],
+    "tls_enabled": true,
+    "rtp": { "port_start": 10000, "port_end": 20000 }
+  },
+  "requires_disruptive_action": false
+}
+```
+
+### 6.4 Worker team handoff checklist
+
+Give the provisioning worker team:
+1. Absolute VM script paths:
+- `/opt/agentvoice/bin/apply_trunk.sh`
+- `/opt/agentvoice/bin/verify_trunk.sh`
+2. This JSON structure contract (Section 6.1).
+3. One production-like example payload per tenant/trunk (Section 6.3).
+4. The exact SSH trigger sequence from Section 8.1.
+5. Expected exit behavior:
+- exit `0` = success JSON
+- non-zero = failure JSON (parse `code` and `message`)
+
 ## 7. Runtime behavior of templates
 
 `/opt/agentvoice/bin/apply_trunk.sh`:
@@ -136,6 +266,33 @@ agentvoice ALL=(root) NOPASSWD: /usr/sbin/asterisk -rx pjsip\ show\ endpoint\ *
   --trunk-id org1-main \
   --state-file /opt/agentvoice/state/org1-main.json
 ```
+
+## 8.1 Worker trigger contract (SSH)
+
+Expected input params:
+1. `--trunk-id <id>`
+2. `--state-file <absolute-json-path>`
+
+Trigger sequence:
+1. Upload JSON state file to VM:
+
+```bash
+scp trunk_state.json agentvoice@<VM_HOST>:/opt/agentvoice/state/org1-main.json
+```
+
+2. Apply:
+
+```bash
+ssh agentvoice@<VM_HOST> "/opt/agentvoice/bin/apply_trunk.sh --trunk-id org1-main --state-file /opt/agentvoice/state/org1-main.json"
+```
+
+3. Verify:
+
+```bash
+ssh agentvoice@<VM_HOST> "/opt/agentvoice/bin/verify_trunk.sh --trunk-id org1-main --state-file /opt/agentvoice/state/org1-main.json"
+```
+
+The worker must parse stdout JSON and treat non-zero exit as failure.
 
 ## 9. Example success output
 
@@ -213,3 +370,62 @@ Provide:
 ## 13. Important integration note
 
 These scripts are safe templates and may need adaptation to your exact Asterisk include layout (`/etc/asterisk/*.conf` vs generated include paths). Keep non-disruptive reload as the default and avoid service restarts in normal provisioning flow.
+
+## 14. VM ready-now checklist (after git pull)
+
+Run this on VM:
+
+```bash
+cd /home/azureuser/agentic-sip-trunk
+git pull
+sudo cp provisioning/bin/apply_trunk.sh /opt/agentvoice/bin/apply_trunk.sh
+sudo cp provisioning/bin/verify_trunk.sh /opt/agentvoice/bin/verify_trunk.sh
+sudo chown agentvoice:agentvoice /opt/agentvoice/bin/apply_trunk.sh /opt/agentvoice/bin/verify_trunk.sh
+sudo chmod 750 /opt/agentvoice/bin/apply_trunk.sh /opt/agentvoice/bin/verify_trunk.sh
+sudo systemctl enable asterisk
+sudo systemctl start asterisk
+sudo systemctl status asterisk --no-pager
+asterisk -rx "core show version"
+```
+
+If you run app services on the VM, also ensure:
+
+```bash
+sudo systemctl enable agentic-app agentic-ari-bridge
+sudo systemctl restart agentic-app agentic-ari-bridge
+sudo systemctl status agentic-app agentic-ari-bridge --no-pager
+```
+
+## 15. Inspect incoming SIP traffic and provisioning logs
+
+Provisioning script logs:
+
+```bash
+sudo tail -f /var/log/agentvoice/provisioning.log
+```
+
+Asterisk live console:
+
+```bash
+sudo asterisk -rvvv
+```
+
+Inside Asterisk console for SIP signaling visibility:
+
+```text
+pjsip set logger on
+```
+
+For RTP packet debug (temporary):
+
+```text
+rtp set debug on
+```
+
+Service logs:
+
+```bash
+journalctl -u asterisk -f
+journalctl -u agentic-app -f
+journalctl -u agentic-ari-bridge -f
+```

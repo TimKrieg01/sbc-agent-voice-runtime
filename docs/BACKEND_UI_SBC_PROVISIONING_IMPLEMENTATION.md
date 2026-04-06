@@ -2,6 +2,19 @@
 
 This document is the backend execution contract to make UI changes become real, safe, live SBC behavior and network access control.
 
+## 0. Scope lock for now: ingress-host only routing
+
+For the current phase, trunk/tenant selection is based only on `ingress_hosts`.
+
+Explicitly out of scope for now:
+- called-number based trunk selection,
+- host+number combined matching logic.
+
+Routing model for now:
+1. Match inbound call by ingress host (for example `org1.sip.agentvoiceruntime.com`).
+2. Resolve trunk/org from that host.
+3. Forward to configured backend URL from trunk routing rules.
+
 ## 1. Final Architecture (must be implemented)
 
 Three planes:

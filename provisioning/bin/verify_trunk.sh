@@ -19,6 +19,9 @@ json_out() {
   local code="$2"
   local message="$3"
   local extra="${4:-{}}"
+  if ! printf "%s" "$extra" | jq -e . >/dev/null 2>&1; then
+    extra='{}'
+  fi
   jq -n \
     --arg script "$SCRIPT_NAME" \
     --arg version "$VERSION" \
@@ -43,6 +46,9 @@ log_json() {
   local action="$1"
   local result="$2"
   local details="${3:-{}}"
+  if ! printf "%s" "$details" | jq -e . >/dev/null 2>&1; then
+    details='{}'
+  fi
   mkdir -p "$(dirname "$LOG_FILE")"
   jq -nc \
     --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
