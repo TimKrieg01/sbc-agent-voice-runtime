@@ -5,17 +5,18 @@ class Settings(BaseSettings):
     AZURE_SPEECH_REGION: str = "eastus"
     AZURE_SPEECH_ENDPOINT: str | None = None
 
-    # Tenant config source for SIP ingress:
-    # - env: use SIP_TENANT_RULES_JSON
-    # - db: use SIP_CONFIG_DATABASE_URL tables only
-    # - auto: prefer DB if configured, else fallback to env
-    SIP_TENANT_CONFIG_SOURCE: str = "auto"
+    # Runtime config database used for SIP policy/realtime integration.
     SIP_CONFIG_DATABASE_URL: str = ""
+
+    # Session profile fallback values for ARI worker if Stasis args are incomplete.
+    SIP_DEFAULT_TENANT_ID: str = "default"
+    SIP_DEFAULT_STT_ENGINE: str = "azure"
+    SIP_DEFAULT_LANGUAGES: str = "en-US"
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        # We keep extra env keys for SIP/ARI workers in the same .env file.
+        # Keep additional worker env keys in the same .env file.
         extra="ignore",
     )
 

@@ -8,7 +8,6 @@ import re
 from urllib import error, parse, request
 
 import websockets
-from src.core.tenant import TenantResolutionError, resolve_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +56,42 @@ def _extract_sip_host_from_to_header(to_header: str | None) -> str:
         return ""
 
     compact = to_header.strip()
-    match = re.search(r"sips?:[^@]+@([^;>\s]+)", compact, re.IGNORECASE)
+    match = re.search(r"sips?:([^;>\s]+)", compact, re.IGNORECASE)
     if not match:
         return ""
-    return match.group(1).strip().lower()
+    uri_part = match.group(1).strip()
+    if not uri_part:
+        return ""
+
+    # sip URI userinfo is optional; when present use host[:port] after "@"
+    host_port = uri_part.rsplit("@", 1)[-1].strip()
+    if not host_port:
+        return ""
+
+    # IPv6 literal host: [2001:db8::1]:5061
+    if host_port.startswith("["):
+        end = host_port.find("]")
+        if end == -1:
+            return ""
+        return host_port[1:end].strip().lower()
+
+    # Regular host[:port]
+    host = host_port.split(":", 1)[0].strip().lower()
+    return host
 
 
 def _safe_arg(args: list[str], index: int) -> str:
     if index >= len(args):
         return ""
     return (args[index] or "").strip()
+
+
+def _default_session_profile() -> tuple[str, str, list[str]]:
+    tenant_id = (os.getenv("SIP_DEFAULT_TENANT_ID") or "default").strip() or "default"
+    stt_engine = (os.getenv("SIP_DEFAULT_STT_ENGINE") or "azure").strip() or "azure"
+    languages_csv = (os.getenv("SIP_DEFAULT_LANGUAGES") or "en-US").strip()
+    languages = [x.strip() for x in languages_csv.split(",") if x.strip()] or ["en-US"]
+    return tenant_id, stt_engine, languages
 
 
 class AriBridgeWorker:
@@ -123,35 +148,41 @@ class AriBridgeWorker:
         called_number = _safe_arg(args, 0) or channel.get("dialplan", {}).get("exten", "")
         to_header = _safe_arg(args, 1)
         auth_user = _safe_arg(args, 2)
+        trunk_id_arg = _safe_arg(args, 3)
+        backend_url_arg = _safe_arg(args, 4)
+        route_id_arg = _safe_arg(args, 5)
+        tenant_id_arg = _safe_arg(args, 6)
+        stt_engine_arg = _safe_arg(args, 7)
+        languages_arg = _safe_arg(args, 8)
         ingress_host = _extract_sip_host_from_to_header(to_header)
 
-        try:
-            tenant_resolution = resolve_tenant(
-                ingress_host=ingress_host,
-                called_number=called_number,
-                auth_user=auth_user,
-            )
-        except TenantResolutionError as exc:
+        # Dialplan/DB precheck must provide at least trunk and backend route.
+        # If these are missing, refuse channel startup to avoid blind call acceptance.
+        if not trunk_id_arg or not backend_url_arg:
             logger.error(
-                "Tenant resolution failed for channel=%s called_number='%s' ingress_host='%s' auth_user='%s': %s",
+                "Missing route metadata from dialplan precheck for channel=%s trunk_id='%s' backend_url='%s'; dropping call.",
                 channel_id,
-                called_number,
-                ingress_host,
-                auth_user,
-                exc,
+                trunk_id_arg,
+                backend_url_arg,
             )
             try:
                 self._ari_delete(f"/channels/{channel_id}")
             except Exception as drop_exc:
-                logger.warning("Failed to hang up channel %s after resolution error: %s", channel_id, drop_exc)
+                logger.warning("Failed to hang up channel %s after missing-route metadata: %s", channel_id, drop_exc)
             return
 
-        tenant = tenant_resolution.tenant
+        default_tenant_id, default_stt_engine, default_languages = _default_session_profile()
+        tenant_id = tenant_id_arg or default_tenant_id
+        stt_engine = stt_engine_arg or default_stt_engine
+        languages = [x.strip() for x in languages_arg.split(",") if x.strip()] if languages_arg else default_languages
+
         logger.info(
-            "Resolved tenant for channel=%s tenant_id=%s match=%s host='%s' called='%s' auth_user='%s'",
+            "Inbound route approved: channel=%s tenant_id=%s trunk_id=%s route_id=%s backend_url=%s host='%s' called='%s' auth_user='%s'",
             channel_id,
-            tenant.tenant_id,
-            tenant_resolution.match_reason,
+            tenant_id,
+            trunk_id_arg,
+            route_id_arg,
+            backend_url_arg,
             ingress_host,
             called_number,
             auth_user,
@@ -159,9 +190,9 @@ class AriBridgeWorker:
 
         media_session = self._start_media_session(
             session_id=session_id,
-            tenant_id=tenant.tenant_id,
-            stt_engine=tenant.stt_engine,
-            languages=tenant.languages,
+            tenant_id=tenant_id,
+            stt_engine=stt_engine,
+            languages=languages,
         )
         media_host = media_session.get("media_host", "127.0.0.1")
         media_port = media_session["media_port"]
@@ -185,14 +216,17 @@ class AriBridgeWorker:
             "session_id": session_id,
             "bridge_id": bridge_id,
             "external_id": external_id,
-            "tenant_id": tenant.tenant_id,
+            "tenant_id": tenant_id,
+            "trunk_id": trunk_id_arg,
+            "route_id": route_id_arg,
+            "backend_url": backend_url_arg,
             "ingress_host": ingress_host,
             "called_number": called_number,
         }
         logger.info(
             "Call bridged: channel=%s tenant=%s bridge=%s external=%s media=%s:%s",
             channel_id,
-            tenant.tenant_id,
+            tenant_id,
             bridge_id,
             external_id,
             media_host,
