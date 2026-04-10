@@ -9,7 +9,7 @@ This repository now targets a stateless SBC runtime:
 
 Call flow:
 1. SIP INVITE arrives at Asterisk.
-2. PJSIP identifies endpoint from realtime DB (`ps_endpoint_id_ips` + `ps_endpoints`).
+2. PJSIP identifies endpoint from realtime DB (`ps_endpoint_id_ips` + `ps_endpoints`), preferring host/header matches.
 3. Call enters `inbound-realtime` dialplan.
 4. Dialplan calls `ODBC_AV_ROUTE_DECIDE(...)` which calls DB function `resolve_inbound_route(...)`.
 5. If `reject`, hangup before `Answer()`.
@@ -173,9 +173,9 @@ Before traffic can be accepted, you must insert at least:
 - one active `organization`
 - one active `inbound_trunk`
 - one active `trunk_ingress_host`
-- one active `trunk_source_cidr`
+- zero or more active `trunk_source_cidr` rows when source IP allowlisting is desired
 - one active `routing_rule`
-- matching `ps_endpoints` + `ps_aors` + `ps_endpoint_id_ips` rows
+- matching `ps_endpoints` + `ps_aors` + `ps_endpoint_id_ips` rows, typically using `match_header` for host-based trunk selection
 
 Then run:
 

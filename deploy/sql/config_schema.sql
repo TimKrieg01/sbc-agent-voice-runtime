@@ -162,8 +162,10 @@ DECLARE
 
     v_host_count    INTEGER;
     v_auth_count    INTEGER;
+    v_cidr_count    INTEGER;
     v_auth_ok       BOOLEAN;
     v_cidr_ok       BOOLEAN;
+    v_route_count   INTEGER;
 
     v_reason        TEXT := '';
     v_cause         INTEGER := NULL;
@@ -172,15 +174,13 @@ BEGIN
         RETURN 'reject|||||||missing_host|21';
     END IF;
 
-    IF trim(COALESCE(p_source_ip, '')) = '' THEN
-        RETURN 'reject|||||||missing_source_ip|21';
+    IF trim(COALESCE(p_source_ip, '')) <> '' THEN
+        BEGIN
+            v_source_inet := trim(COALESCE(p_source_ip, ''))::inet;
+        EXCEPTION WHEN others THEN
+            RETURN 'reject|||||||invalid_source_ip|21';
+        END;
     END IF;
-
-    BEGIN
-        v_source_inet := trim(COALESCE(p_source_ip, ''))::inet;
-    EXCEPTION WHEN others THEN
-        RETURN 'reject|||||||invalid_source_ip|21';
-    END;
 
     SELECT COUNT(*)
       INTO v_host_count
@@ -209,16 +209,28 @@ BEGIN
        AND lower(h.host) = v_host
      LIMIT 1;
 
-    SELECT EXISTS (
-        SELECT 1
-          FROM trunk_source_cidrs c
-         WHERE c.trunk_id = v_trunk_id
-           AND c.is_active = TRUE
-           AND v_source_inet <<= c.cidr
-    ) INTO v_cidr_ok;
+    SELECT COUNT(*)
+      INTO v_cidr_count
+      FROM trunk_source_cidrs c
+     WHERE c.trunk_id = v_trunk_id
+       AND c.is_active = TRUE;
 
-    IF NOT COALESCE(v_cidr_ok, FALSE) THEN
-        RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||source_ip_not_allowed|21';
+    IF v_cidr_count > 0 THEN
+        IF v_source_inet IS NULL THEN
+            RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||missing_source_ip|21';
+        END IF;
+
+        SELECT EXISTS (
+            SELECT 1
+              FROM trunk_source_cidrs c
+             WHERE c.trunk_id = v_trunk_id
+               AND c.is_active = TRUE
+               AND v_source_inet <<= c.cidr
+        ) INTO v_cidr_ok;
+
+        IF NOT COALESCE(v_cidr_ok, FALSE) THEN
+            RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||source_ip_not_allowed|21';
+        END IF;
     END IF;
 
     SELECT COUNT(*)
@@ -249,6 +261,24 @@ BEGIN
        AND v_called ~ r.called_number_pattern
      ORDER BY r.priority ASC, r.id ASC
      LIMIT 1;
+
+    IF v_route_id IS NULL OR v_backend_url IS NULL OR v_backend_url = '' THEN
+        SELECT COUNT(*)
+          INTO v_route_count
+          FROM routing_rules r
+         WHERE r.trunk_id = v_trunk_id
+           AND r.is_active = TRUE;
+
+        IF v_route_count = 1 THEN
+            SELECT r.id, r.backend_url
+              INTO v_route_id, v_backend_url
+              FROM routing_rules r
+             WHERE r.trunk_id = v_trunk_id
+               AND r.is_active = TRUE
+             ORDER BY r.priority ASC, r.id ASC
+             LIMIT 1;
+        END IF;
+    END IF;
 
     IF v_route_id IS NULL OR v_backend_url IS NULL OR v_backend_url = '' THEN
         RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||no_matching_route|3';

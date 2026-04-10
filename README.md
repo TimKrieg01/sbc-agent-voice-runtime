@@ -13,7 +13,7 @@ Stateless SIP ingress runtime for Asterisk + ARI with database-driven trunk admi
 - No generated per-trunk `.conf` files on VM.
 - Asterisk PJSIP objects are loaded from realtime DB tables via Sorcery (`ps_*`).
 - Dialplan precheck calls DB function `resolve_inbound_route(...)` via ODBC.
-- Calls are rejected before Stasis when host/CIDR/auth/route checks fail.
+- Calls are rejected before Stasis when host/auth/route checks fail, with CIDR checks applied only when configured for that trunk.
 - ARI worker only handles calls that already passed route admission.
 
 ## Quick Start

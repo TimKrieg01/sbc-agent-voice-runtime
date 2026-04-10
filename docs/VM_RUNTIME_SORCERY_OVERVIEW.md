@@ -33,7 +33,7 @@ This document explains how the VM works in the stateless design.
 ## 3. Runtime Call Sequence
 
 1. INVITE arrives.
-2. PJSIP identifies endpoint from realtime DB.
+2. PJSIP identifies endpoint from realtime DB, preferring the called host/header.
 3. Dialplan extracts host/auth/source/called.
 4. Dialplan calls `ODBC_AV_ROUTE_DECIDE`.
 5. If `reject` -> immediate hangup with cause code.
@@ -52,6 +52,7 @@ This model enforces:
 - unknown host rejected
 - source IP not in CIDR rejected
 - auth user mismatch rejected (when configured)
+- source CIDR mismatch rejected only when CIDR allowlists are configured for the trunk
 - no matching route rejected
 
 No route validation is deferred to post-answer business logic.

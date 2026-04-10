@@ -94,8 +94,8 @@ Minimum required object set per active trunk:
 2. AOR row in `ps_aors`
 3. Optional auth row in `ps_auths` if endpoint auth is used
 4. One or more identify rows in `ps_endpoint_id_ips`:
-- `match` for source CIDR
-- optionally `match_header` for host filtering in identify stage
+- `match_header` for host-based identify stage
+- optional `match` for source CIDR defense-in-depth
 
 Recommended endpoint defaults:
 - `context = inbound-realtime`
@@ -136,9 +136,9 @@ This keeps projection logic simple and reversible.
 
 `resolve_inbound_route` logic order:
 1. ingress host must map to exactly one active trunk
-2. source IP must be within active trunk CIDR allowlist
+2. if trunk has source CIDRs configured, source IP must match one of them
 3. if trunk has auth users configured, auth user must match
-4. routing rule regex must match called number
+4. routing rule regex must match called number, or the single active route becomes the default fallback
 5. best route by `priority`
 
 If any step fails -> `reject`.
@@ -176,8 +176,8 @@ Before enabling traffic:
 2. Upsert Sorcery projection:
 - `ps_endpoints(id='av-<trunk_id>', context='inbound-realtime', aors='av-<trunk_id>')`
 - `ps_aors(id='av-<trunk_id>')`
-- `ps_endpoint_id_ips(endpoint='av-<trunk_id>', match='<cidr>')` for each allowed CIDR
-- optional `match_header` on identify rows if provider CIDRs are shared across trunks
+- `ps_endpoint_id_ips(endpoint='av-<trunk_id>', match_header='To:.*@<ingress-host>(;|>|$)')` for each active ingress host
+- optional `ps_endpoint_id_ips(..., match='<cidr>')` rows for source CIDR defense-in-depth
 
 3. Commit transaction.
 4. Trigger `pjsip reload` on the VM.
