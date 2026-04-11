@@ -6,6 +6,9 @@
 
 BEGIN;
 
+ALTER TABLE ps_endpoints
+    ADD COLUMN IF NOT EXISTS media_encryption_optimistic VARCHAR(10);
+
 INSERT INTO ps_aors (id, max_contacts, remove_existing)
 VALUES ('anonymous', 10, 'yes')
 ON CONFLICT (id) DO UPDATE

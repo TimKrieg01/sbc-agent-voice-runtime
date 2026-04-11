@@ -102,8 +102,12 @@ CREATE TABLE IF NOT EXISTS ps_endpoints (
     rewrite_contact             VARCHAR(10)  NOT NULL DEFAULT 'yes',
     force_rport                 VARCHAR(10)  NOT NULL DEFAULT 'yes',
     media_encryption            VARCHAR(20),
+    media_encryption_optimistic VARCHAR(10),
     media_use_received_transport VARCHAR(10)
 );
+
+ALTER TABLE ps_endpoints
+    ADD COLUMN IF NOT EXISTS media_encryption_optimistic VARCHAR(10);
 
 CREATE TABLE IF NOT EXISTS ps_aors (
     id              VARCHAR(80) PRIMARY KEY,
