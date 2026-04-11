@@ -188,6 +188,11 @@ class AriBridgeWorker:
             auth_user,
         )
 
+        # Send 200 OK on the inbound SIP leg before creating the media bridge.
+        # Without answering first, the carrier can keep the call in ringing
+        # state and no user audio reaches the RTP ingress / Azure STT path.
+        self._ari_post(f"/channels/{channel_id}/answer")
+
         media_session = self._start_media_session(
             session_id=session_id,
             tenant_id=tenant_id,
