@@ -3,8 +3,10 @@
 
 BEGIN;
 
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS organizations (
-    id              TEXT PRIMARY KEY,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     slug            TEXT NOT NULL UNIQUE,
     display_name    TEXT NOT NULL,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -13,8 +15,8 @@ CREATE TABLE IF NOT EXISTS organizations (
 );
 
 CREATE TABLE IF NOT EXISTS inbound_trunks (
-    id              TEXT PRIMARY KEY,
-    org_id          TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     provider        TEXT NOT NULL,
     stt_engine      TEXT NOT NULL DEFAULT 'azure',
     languages_csv   TEXT NOT NULL DEFAULT 'en-US',
@@ -29,8 +31,8 @@ CREATE TABLE IF NOT EXISTS inbound_trunks (
 );
 
 CREATE TABLE IF NOT EXISTS trunk_ingress_hosts (
-    id              BIGSERIAL PRIMARY KEY,
-    trunk_id        TEXT NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trunk_id        UUID NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
     host            TEXT NOT NULL,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -43,8 +45,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_trunk_ingress_hosts_active_host
     WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS trunk_auth_users (
-    id              BIGSERIAL PRIMARY KEY,
-    trunk_id        TEXT NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trunk_id        UUID NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
     auth_user       TEXT NOT NULL,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -57,8 +59,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_trunk_auth_users_active_user
     WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS trunk_source_cidrs (
-    id              BIGSERIAL PRIMARY KEY,
-    trunk_id        TEXT NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trunk_id        UUID NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
     cidr            CIDR NOT NULL,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -69,8 +71,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_trunk_source_cidrs_active
     WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS routing_rules (
-    id                      TEXT PRIMARY KEY,
-    trunk_id                TEXT NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trunk_id                UUID NOT NULL REFERENCES inbound_trunks(id) ON DELETE CASCADE,
     priority                INTEGER NOT NULL DEFAULT 100,
     called_number_pattern   TEXT NOT NULL DEFAULT '.*',
     backend_url             TEXT NOT NULL,
@@ -160,13 +162,13 @@ DECLARE
     v_source_inet   INET;
     v_transport     TEXT := lower(trim(COALESCE(p_transport, '')));
 
-    v_trunk_id      TEXT;
-    v_tenant_id     TEXT;
+    v_trunk_id      UUID;
+    v_tenant_id     UUID;
     v_stt_engine    TEXT;
     v_languages     TEXT;
     v_require_tls   BOOLEAN;
 
-    v_route_id      TEXT;
+    v_route_id      UUID;
     v_backend_url   TEXT;
 
     v_host_count    INTEGER;
@@ -208,7 +210,7 @@ BEGIN
         RETURN array_to_string(ARRAY['reject','','','','','','','ambiguous_host','503'], v_delim);
     END IF;
 
-    SELECT t.id, o.slug, t.stt_engine, t.languages_csv, t.require_tls
+    SELECT t.id, o.id, t.stt_engine, t.languages_csv, t.require_tls
       INTO v_trunk_id, v_tenant_id, v_stt_engine, v_languages, v_require_tls
       FROM trunk_ingress_hosts h
       JOIN inbound_trunks t ON t.id = h.trunk_id
@@ -222,7 +224,7 @@ BEGIN
     IF COALESCE(v_require_tls, FALSE) AND v_transport <> 'tls' THEN
         RETURN array_to_string(ARRAY[
             'reject',
-            COALESCE(v_trunk_id, ''),
+            COALESCE(v_trunk_id::text, ''),
             '',
             '',
             '',
@@ -241,7 +243,7 @@ BEGIN
 
     IF v_cidr_count > 0 THEN
         IF v_source_inet IS NULL THEN
-            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'missing_source_ip', '403'], v_delim);
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id::text, ''), '', '', '', '', '', 'missing_source_ip', '403'], v_delim);
         END IF;
 
         SELECT EXISTS (
@@ -253,7 +255,7 @@ BEGIN
         ) INTO v_cidr_ok;
 
         IF NOT COALESCE(v_cidr_ok, FALSE) THEN
-            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'source_ip_not_allowed', '403'], v_delim);
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id::text, ''), '', '', '', '', '', 'source_ip_not_allowed', '403'], v_delim);
         END IF;
     END IF;
 
@@ -273,7 +275,7 @@ BEGIN
         ) INTO v_auth_ok;
 
         IF NOT COALESCE(v_auth_ok, FALSE) THEN
-            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'auth_user_not_allowed', '403'], v_delim);
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id::text, ''), '', '', '', '', '', 'auth_user_not_allowed', '403'], v_delim);
         END IF;
     END IF;
 
@@ -305,15 +307,15 @@ BEGIN
     END IF;
 
     IF v_route_id IS NULL OR v_backend_url IS NULL OR v_backend_url = '' THEN
-        RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'no_matching_route', '404'], v_delim);
+        RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id::text, ''), '', '', '', '', '', 'no_matching_route', '404'], v_delim);
     END IF;
 
     RETURN array_to_string(ARRAY[
         'allow',
-        COALESCE(v_trunk_id, ''),
-        COALESCE(v_route_id, ''),
+        COALESCE(v_trunk_id::text, ''),
+        COALESCE(v_route_id::text, ''),
         COALESCE(v_backend_url, ''),
-        COALESCE(v_tenant_id, ''),
+        COALESCE(v_tenant_id::text, ''),
         COALESCE(v_stt_engine, 'azure'),
         COALESCE(v_languages, 'en-US'),
         COALESCE(v_reason, ''),
