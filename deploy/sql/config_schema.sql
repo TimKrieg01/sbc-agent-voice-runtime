@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS inbound_trunks (
     provider        TEXT NOT NULL,
     stt_engine      TEXT NOT NULL DEFAULT 'azure',
     languages_csv   TEXT NOT NULL DEFAULT 'en-US',
+    require_tls     BOOLEAN NOT NULL DEFAULT FALSE,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -143,7 +144,8 @@ CREATE OR REPLACE FUNCTION resolve_inbound_route(
     p_ingress_host  TEXT,
     p_called_number TEXT,
     p_auth_user     TEXT,
-    p_source_ip     TEXT
+    p_source_ip     TEXT,
+    p_transport     TEXT
 ) RETURNS TEXT
 LANGUAGE plpgsql
 AS $$
@@ -152,11 +154,13 @@ DECLARE
     v_called        TEXT := trim(COALESCE(p_called_number, ''));
     v_auth          TEXT := lower(trim(COALESCE(p_auth_user, '')));
     v_source_inet   INET;
+    v_transport     TEXT := lower(trim(COALESCE(p_transport, '')));
 
     v_trunk_id      TEXT;
     v_tenant_id     TEXT;
     v_stt_engine    TEXT;
     v_languages     TEXT;
+    v_require_tls   BOOLEAN;
 
     v_route_id      TEXT;
     v_backend_url   TEXT;
@@ -200,8 +204,8 @@ BEGIN
         RETURN array_to_string(ARRAY['reject','','','','','','','ambiguous_host','503'], v_delim);
     END IF;
 
-    SELECT t.id, o.slug, t.stt_engine, t.languages_csv
-      INTO v_trunk_id, v_tenant_id, v_stt_engine, v_languages
+    SELECT t.id, o.slug, t.stt_engine, t.languages_csv, t.require_tls
+      INTO v_trunk_id, v_tenant_id, v_stt_engine, v_languages, v_require_tls
       FROM trunk_ingress_hosts h
       JOIN inbound_trunks t ON t.id = h.trunk_id
       JOIN organizations o ON o.id = t.org_id
@@ -210,6 +214,20 @@ BEGIN
        AND o.is_active = TRUE
        AND lower(h.host) = v_host
      LIMIT 1;
+
+    IF COALESCE(v_require_tls, FALSE) AND v_transport <> 'tls' THEN
+        RETURN array_to_string(ARRAY[
+            'reject',
+            COALESCE(v_trunk_id, ''),
+            '',
+            '',
+            '',
+            '',
+            '',
+            'tls_required',
+            '403'
+        ], v_delim);
+    END IF;
 
     SELECT COUNT(*)
       INTO v_cidr_count

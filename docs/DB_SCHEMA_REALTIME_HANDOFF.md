@@ -59,6 +59,7 @@ Defined in `deploy/sql/config_schema.sql`.
 
 ### `inbound_trunks`
 - trunk metadata (`provider`, `stt_engine`, `languages_csv`, active state)
+- optional `require_tls` policy for signaling
 - references `organizations`
 
 ### `trunk_ingress_hosts`

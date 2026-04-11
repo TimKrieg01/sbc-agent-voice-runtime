@@ -1,6 +1,8 @@
 -- Generic inbound PJSIP endpoint for host-based routing.
 -- This lets Asterisk accept inbound SIP requests via the anonymous endpoint
 -- and defer trunk/route matching to the dialplan + resolve_inbound_route(...).
+-- Media policy is intentionally permissive: negotiate SRTP via SDES when the
+-- peer offers it, but still allow plain RTP for trunks that do not use SRTP.
 
 BEGIN;
 
@@ -17,6 +19,8 @@ INSERT INTO ps_endpoints (
     disallow,
     allow,
     direct_media,
+    media_encryption,
+    media_encryption_optimistic,
     rtp_symmetric,
     rewrite_contact,
     force_rport
@@ -28,6 +32,8 @@ VALUES (
     'all',
     'ulaw',
     'no',
+    'sdes',
+    'yes',
     'yes',
     'yes',
     'yes'
@@ -38,6 +44,8 @@ SET aors = EXCLUDED.aors,
     disallow = EXCLUDED.disallow,
     allow = EXCLUDED.allow,
     direct_media = EXCLUDED.direct_media,
+    media_encryption = EXCLUDED.media_encryption,
+    media_encryption_optimistic = EXCLUDED.media_encryption_optimistic,
     rtp_symmetric = EXCLUDED.rtp_symmetric,
     rewrite_contact = EXCLUDED.rewrite_contact,
     force_rport = EXCLUDED.force_rport;

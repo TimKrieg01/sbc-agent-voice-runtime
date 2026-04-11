@@ -190,6 +190,10 @@ Before traffic can be accepted, you must insert at least:
 - one active `routing_rule`
 - the generic inbound `ps_endpoints(id='anonymous')` + `ps_aors(id='anonymous')` rows
 
+Optional per-trunk signaling security:
+- set `inbound_trunks.require_tls = TRUE` to reject non-TLS signaling for that trunk
+- RTP/SRTP remains transport-neutral in the generic inbound model
+
 Then run:
 
 ```bash
@@ -198,6 +202,9 @@ psql "host=<DB_HOST> port=5432 dbname=<DB_NAME> user=<DB_USER> password=<DB_PASS
   -f deploy/sql/generic_inbound_endpoint.sql
 sudo asterisk -rx "pjsip reload"
 ```
+
+The generic inbound endpoint is currently transport-neutral.
+If you want TLS/SRTP requirements to vary by trunk, do not pin those settings globally on `anonymous`; model them separately as trunk policy first.
 
 ## 9. Install App Services
 

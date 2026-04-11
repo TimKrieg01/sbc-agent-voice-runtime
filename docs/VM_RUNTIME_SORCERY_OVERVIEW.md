@@ -50,6 +50,7 @@ Implementation files:
 
 This model enforces:
 - unknown host rejected
+- trunks marked `require_tls` reject non-TLS signaling
 - source IP not in CIDR rejected when a CIDR allowlist exists
 - auth user mismatch rejected (when configured)
 - source CIDR mismatch rejected only when CIDR allowlists are configured for the trunk
@@ -66,6 +67,11 @@ Only bootstrap files remain static on VM:
 - `http.conf`, `ari.conf`, `rtp.conf`
 
 No static per-trunk files are needed.
+
+TLS/SRTP note:
+- The current generic anonymous endpoint is intentionally transport-neutral.
+- Secure signaling can be enforced per trunk using `inbound_trunks.require_tls`.
+- Secure media is not enforced per trunk in the generic anonymous-endpoint design.
 
 ## 6. Operational Reload Model
 
