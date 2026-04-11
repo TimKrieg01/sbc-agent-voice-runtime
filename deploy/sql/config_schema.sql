@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS ps_domain_aliases (
 
 -- -------------------------------------------------------------------------
 -- Runtime decision function consumed by func_odbc + dialplan precheck
--- Return format (pipe-delimited):
--- decision|trunk_id|route_id|backend_url|tenant_id|stt_engine|languages_csv|reject_reason|reject_cause
+-- Return format (caret-delimited):
+-- decision^trunk_id^route_id^backend_url^tenant_id^stt_engine^languages_csv^reject_reason^reject_cause
 -- -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION resolve_inbound_route(
@@ -166,19 +166,20 @@ DECLARE
     v_auth_ok       BOOLEAN;
     v_cidr_ok       BOOLEAN;
     v_route_count   INTEGER;
+    v_delim         TEXT := '^';
 
     v_reason        TEXT := '';
     v_cause         INTEGER := NULL;
 BEGIN
     IF v_host = '' THEN
-        RETURN 'reject|||||||missing_host|21';
+        RETURN array_to_string(ARRAY['reject','','','','','','','missing_host','21'], v_delim);
     END IF;
 
     IF trim(COALESCE(p_source_ip, '')) <> '' THEN
         BEGIN
             v_source_inet := trim(COALESCE(p_source_ip, ''))::inet;
         EXCEPTION WHEN others THEN
-            RETURN 'reject|||||||invalid_source_ip|21';
+            RETURN array_to_string(ARRAY['reject','','','','','','','invalid_source_ip','21'], v_delim);
         END;
     END IF;
 
@@ -193,9 +194,9 @@ BEGIN
        AND lower(h.host) = v_host;
 
     IF v_host_count = 0 THEN
-        RETURN 'reject|||||||unknown_host|21';
+        RETURN array_to_string(ARRAY['reject','','','','','','','unknown_host','21'], v_delim);
     ELSIF v_host_count > 1 THEN
-        RETURN 'reject|||||||ambiguous_host|21';
+        RETURN array_to_string(ARRAY['reject','','','','','','','ambiguous_host','21'], v_delim);
     END IF;
 
     SELECT t.id, o.slug, t.stt_engine, t.languages_csv
@@ -217,7 +218,7 @@ BEGIN
 
     IF v_cidr_count > 0 THEN
         IF v_source_inet IS NULL THEN
-            RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||missing_source_ip|21';
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'missing_source_ip', '21'], v_delim);
         END IF;
 
         SELECT EXISTS (
@@ -229,7 +230,7 @@ BEGIN
         ) INTO v_cidr_ok;
 
         IF NOT COALESCE(v_cidr_ok, FALSE) THEN
-            RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||source_ip_not_allowed|21';
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'source_ip_not_allowed', '21'], v_delim);
         END IF;
     END IF;
 
@@ -249,7 +250,7 @@ BEGIN
         ) INTO v_auth_ok;
 
         IF NOT COALESCE(v_auth_ok, FALSE) THEN
-            RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||auth_user_not_allowed|21';
+            RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'auth_user_not_allowed', '21'], v_delim);
         END IF;
     END IF;
 
@@ -281,10 +282,10 @@ BEGIN
     END IF;
 
     IF v_route_id IS NULL OR v_backend_url IS NULL OR v_backend_url = '' THEN
-        RETURN 'reject|' || COALESCE(v_trunk_id, '') || '||||||no_matching_route|3';
+        RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'no_matching_route', '3'], v_delim);
     END IF;
 
-    RETURN concat_ws('|',
+    RETURN array_to_string(ARRAY[
         'allow',
         COALESCE(v_trunk_id, ''),
         COALESCE(v_route_id, ''),
@@ -292,9 +293,9 @@ BEGIN
         COALESCE(v_tenant_id, ''),
         COALESCE(v_stt_engine, 'azure'),
         COALESCE(v_languages, 'en-US'),
-        v_reason,
+        COALESCE(v_reason, ''),
         COALESCE(v_cause::text, '')
-    );
+    ], v_delim);
 END;
 $$;
 
