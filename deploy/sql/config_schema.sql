@@ -194,7 +194,7 @@ BEGIN
        AND lower(h.host) = v_host;
 
     IF v_host_count = 0 THEN
-        RETURN array_to_string(ARRAY['reject','','','','','','','unknown_host','21'], v_delim);
+        RETURN array_to_string(ARRAY['reject','','','','','','','unknown_host','1'], v_delim);
     ELSIF v_host_count > 1 THEN
         RETURN array_to_string(ARRAY['reject','','','','','','','ambiguous_host','21'], v_delim);
     END IF;
@@ -282,7 +282,7 @@ BEGIN
     END IF;
 
     IF v_route_id IS NULL OR v_backend_url IS NULL OR v_backend_url = '' THEN
-        RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'no_matching_route', '3'], v_delim);
+        RETURN array_to_string(ARRAY['reject', COALESCE(v_trunk_id, ''), '', '', '', '', '', 'no_matching_route', '1'], v_delim);
     END IF;
 
     RETURN array_to_string(ARRAY[
