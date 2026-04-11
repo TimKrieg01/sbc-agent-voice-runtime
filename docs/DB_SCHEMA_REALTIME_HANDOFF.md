@@ -90,12 +90,10 @@ Sorcery reads these directly:
 - `ps_domain_aliases`
 
 Minimum required object set per active trunk:
-1. Endpoint row in `ps_endpoints`
-2. AOR row in `ps_aors`
-3. Optional auth row in `ps_auths` if endpoint auth is used
-4. One or more identify rows in `ps_endpoint_id_ips`:
-- `match_header` for host-based identify stage
-- optional `match` for source CIDR defense-in-depth
+1. Business policy rows in `inbound_trunks`, `trunk_ingress_hosts`, and `routing_rules`
+2. Optional policy rows in `trunk_source_cidrs` and `trunk_auth_users`
+3. One generic inbound endpoint row in `ps_endpoints` with `id='anonymous'`
+4. One generic inbound AOR row in `ps_aors` with `id='anonymous'`
 
 Recommended endpoint defaults:
 - `context = inbound-realtime`
@@ -173,11 +171,10 @@ Before enabling traffic:
 - `trunk_source_cidrs`
 - `routing_rules`
 
-2. Upsert Sorcery projection:
-- `ps_endpoints(id='av-<trunk_id>', context='inbound-realtime', aors='av-<trunk_id>')`
-- `ps_aors(id='av-<trunk_id>')`
-- `ps_endpoint_id_ips(endpoint='av-<trunk_id>', match_header='To:.*@<ingress-host>(;|>|$)')` for each active ingress host
-- optional `ps_endpoint_id_ips(..., match='<cidr>')` rows for source CIDR defense-in-depth
+2. Ensure generic Sorcery projection exists:
+- `ps_endpoints(id='anonymous', context='inbound-realtime', aors='anonymous')`
+- `ps_aors(id='anonymous')`
+- `ps_endpoint_id_ips` rows are not required for normal host-based routing
 
 3. Commit transaction.
 4. Trigger `pjsip reload` on the VM.
@@ -185,7 +182,7 @@ Before enabling traffic:
 ### 9.2 Deactivate/Delete Trunk (single transaction)
 
 1. Set business rows inactive (or delete based on policy).
-2. Remove related `ps_endpoint_id_ips`, `ps_endpoints`, `ps_aors`, `ps_auths`.
+2. Remove any per-trunk `ps_auths` rows if they exist.
 3. Commit transaction.
 4. Trigger `pjsip reload`.
 
@@ -203,12 +200,12 @@ where t.is_active = true and o.is_active = true;
 -- Realtime endpoint projection rows
 select e.id, e.context, e.aors
 from ps_endpoints e
-where e.id like 'av-%';
+where e.id = 'anonymous';
 
--- Identify coverage per endpoint
-select i.endpoint, i.match, i.match_header
-from ps_endpoint_id_ips i
-order by i.endpoint, i.id;
+-- Generic inbound endpoint presence
+select e.id, e.context, e.aors
+from ps_endpoints e
+where e.id = 'anonymous';
 ```
 ## 11. File References
 

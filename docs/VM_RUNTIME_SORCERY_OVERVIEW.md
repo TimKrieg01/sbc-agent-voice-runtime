@@ -33,7 +33,7 @@ This document explains how the VM works in the stateless design.
 ## 3. Runtime Call Sequence
 
 1. INVITE arrives.
-2. PJSIP identifies endpoint from realtime DB, preferring the called host/header.
+2. PJSIP admits the request through the generic anonymous endpoint.
 3. Dialplan extracts host/auth/source/called.
 4. Dialplan calls `ODBC_AV_ROUTE_DECIDE`.
 5. If `reject` -> immediate hangup with cause code.
@@ -50,7 +50,7 @@ Implementation files:
 
 This model enforces:
 - unknown host rejected
-- source IP not in CIDR rejected
+- source IP not in CIDR rejected when a CIDR allowlist exists
 - auth user mismatch rejected (when configured)
 - source CIDR mismatch rejected only when CIDR allowlists are configured for the trunk
 - no matching route rejected
@@ -70,7 +70,7 @@ No static per-trunk files are needed.
 ## 6. Operational Reload Model
 
 - DB changes become active after:
-  - `pjsip reload` for Sorcery PJSIP object changes
+  - `pjsip reload` for the generic anonymous endpoint row and any optional auth projection changes
   - `dialplan reload` only when dialplan templates change
 
 Normal trunk onboarding should only require DB writes + `pjsip reload`.

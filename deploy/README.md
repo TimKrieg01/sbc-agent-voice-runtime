@@ -9,7 +9,7 @@ This repository now targets a stateless SBC runtime:
 
 Call flow:
 1. SIP INVITE arrives at Asterisk.
-2. PJSIP identifies endpoint from realtime DB (`ps_endpoint_id_ips` + `ps_endpoints`), preferring host/header matches.
+2. PJSIP admits the request through the generic anonymous endpoint.
 3. Call enters `inbound-realtime` dialplan.
 4. Dialplan calls `ODBC_AV_ROUTE_DECIDE(...)` which calls DB function `resolve_inbound_route(...)`.
 5. If `reject`, hangup before `Answer()`.
@@ -54,6 +54,23 @@ Populate `.env` at minimum:
 - `ASTERISK_ARI_*`
 - `PYTHON_APP_BASE`
 - `SIP_CONFIG_DATABASE_URL`
+
+## 3.1 Create VM-Specific Render Variables
+
+Copy the VM template vars file and fill in your local values:
+
+```bash
+cp deploy/vm.env.example deploy/vm.env
+nano deploy/vm.env
+```
+
+Use it to render the VM-specific config files:
+
+```bash
+python3 scripts/render_vm_configs.py
+```
+
+This writes generated files under `deploy/rendered/`.
 
 ## 4. Initialize Database Schema
 
@@ -105,21 +122,17 @@ isql -v asterisk_cfg <DB_USER> <DB_PASSWORD>
 ## 6. Install Asterisk Config Files
 
 ```bash
-sudo cp deploy/asterisk/pjsip.conf /etc/asterisk/pjsip.conf
+python3 scripts/render_vm_configs.py
+sudo cp deploy/rendered/asterisk/pjsip.conf /etc/asterisk/pjsip.conf
 sudo cp deploy/asterisk/extensions.conf /etc/asterisk/extensions.conf
-sudo cp deploy/asterisk/http.conf /etc/asterisk/http.conf
-sudo cp deploy/asterisk/ari.conf /etc/asterisk/ari.conf
-sudo cp deploy/asterisk/rtp.conf /etc/asterisk/rtp.conf
+sudo cp deploy/rendered/asterisk/http.conf /etc/asterisk/http.conf
+sudo cp deploy/rendered/asterisk/ari.conf /etc/asterisk/ari.conf
+sudo cp deploy/rendered/asterisk/rtp.conf /etc/asterisk/rtp.conf
 sudo cp deploy/asterisk/sorcery.conf /etc/asterisk/sorcery.conf
 sudo cp deploy/asterisk/extconfig.conf /etc/asterisk/extconfig.conf
-sudo cp deploy/asterisk/res_odbc.conf /etc/asterisk/res_odbc.conf
+sudo cp deploy/rendered/asterisk/res_odbc.conf /etc/asterisk/res_odbc.conf
 sudo cp deploy/asterisk/func_odbc.conf /etc/asterisk/func_odbc.conf
 ```
-
-Set in `/etc/asterisk/pjsip.conf`:
-- `external_signaling_address`
-- `external_media_address`
-- `local_net`
 
 ## 7. TLS Certificates (Recommended Simple Path)
 
@@ -175,23 +188,50 @@ Before traffic can be accepted, you must insert at least:
 - one active `trunk_ingress_host`
 - zero or more active `trunk_source_cidr` rows when source IP allowlisting is desired
 - one active `routing_rule`
-- matching `ps_endpoints` + `ps_aors` + `ps_endpoint_id_ips` rows, typically using `match_header` for host-based trunk selection
+- the generic inbound `ps_endpoints(id='anonymous')` + `ps_aors(id='anonymous')` rows
 
 Then run:
 
 ```bash
+psql "host=<DB_HOST> port=5432 dbname=<DB_NAME> user=<DB_USER> password=<DB_PASSWORD> sslmode=require" \
+  -v ON_ERROR_STOP=1 \
+  -f deploy/sql/generic_inbound_endpoint.sql
 sudo asterisk -rx "pjsip reload"
 ```
 
 ## 9. Install App Services
 
 ```bash
-sudo cp deploy/systemd/agentic-app.service /etc/systemd/system/agentic-app.service
-sudo cp deploy/systemd/agentic-ari-bridge.service /etc/systemd/system/agentic-ari-bridge.service
+python3 scripts/render_vm_configs.py
+sudo cp deploy/rendered/systemd/agentic-app.service /etc/systemd/system/agentic-app.service
+sudo cp deploy/rendered/systemd/agentic-ari-bridge.service /etc/systemd/system/agentic-ari-bridge.service
 sudo systemctl daemon-reload
 sudo systemctl enable agentic-app agentic-ari-bridge
 sudo systemctl restart agentic-app agentic-ari-bridge
 sudo systemctl status agentic-app agentic-ari-bridge --no-pager
+```
+
+## 9.1 After Every `git pull`
+
+Use this workflow instead of manual file edits:
+
+```bash
+cd ~/agentic-sip-trunk
+git pull
+python3 scripts/render_vm_configs.py
+sudo cp deploy/rendered/asterisk/pjsip.conf /etc/asterisk/pjsip.conf
+sudo cp deploy/rendered/asterisk/http.conf /etc/asterisk/http.conf
+sudo cp deploy/rendered/asterisk/ari.conf /etc/asterisk/ari.conf
+sudo cp deploy/rendered/asterisk/rtp.conf /etc/asterisk/rtp.conf
+sudo cp deploy/rendered/asterisk/res_odbc.conf /etc/asterisk/res_odbc.conf
+sudo cp deploy/asterisk/extensions.conf /etc/asterisk/extensions.conf
+sudo cp deploy/asterisk/extconfig.conf /etc/asterisk/extconfig.conf
+sudo cp deploy/asterisk/sorcery.conf /etc/asterisk/sorcery.conf
+sudo cp deploy/asterisk/func_odbc.conf /etc/asterisk/func_odbc.conf
+sudo cp deploy/rendered/systemd/agentic-app.service /etc/systemd/system/agentic-app.service
+sudo cp deploy/rendered/systemd/agentic-ari-bridge.service /etc/systemd/system/agentic-ari-bridge.service
+sudo systemctl daemon-reload
+sudo systemctl restart asterisk agentic-app agentic-ari-bridge
 ```
 
 ## 10. Required Network Rules

@@ -1,0 +1,31 @@
+; Minimal PJSIP bootstrap for Sorcery/realtime.
+; Dynamic endpoints/AOR/auth/identify are loaded from DB tables via Sorcery.
+; Keep only global + transport bootstrap in this file.
+
+[global]
+type=global
+user_agent=agentic-sip-edge
+; Admit inbound SIP through the anonymous endpoint, then let the dialplan and
+; DB routing function decide which configured trunk/route should handle it.
+endpoint_identifier_order=anonymous
+
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+external_signaling_address={{PUBLIC_SIP_HOST}}
+external_media_address={{PUBLIC_MEDIA_HOST}}
+local_net={{LOCAL_NET}}
+
+[transport-tls]
+type=transport
+protocol=tls
+bind=0.0.0.0:5061
+external_signaling_address={{PUBLIC_SIP_HOST}}
+external_media_address={{PUBLIC_MEDIA_HOST}}
+local_net={{LOCAL_NET}}
+cert_file={{TLS_CERT_FILE}}
+priv_key_file={{TLS_PRIV_KEY_FILE}}
+method=tlsv1_2
+verify_client=no
+verify_server=no

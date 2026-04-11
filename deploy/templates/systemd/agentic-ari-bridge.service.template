@@ -1,0 +1,16 @@
+[Unit]
+Description=Agentic ARI Bridge Worker
+After=network.target asterisk.service agentic-app.service
+Requires=agentic-app.service
+
+[Service]
+User={{SERVICE_USER}}
+Group={{SERVICE_GROUP}}
+WorkingDirectory={{APP_DIR}}
+EnvironmentFile={{ENV_FILE}}
+ExecStart={{VENV_DIR}}/bin/python -m src.services.sip.ari_bridge
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
